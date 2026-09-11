@@ -62,5 +62,10 @@ Analytics are calculated from GitHub App installation data and never use mocked 
 - `GET /api/repositories/{owner}/{repo}/analytics/pulls?days=1..180` returns opened, merged, closed, currently open, merge rate, average age of currently open PRs, and daily trends.
 - `GET /api/repositories/{owner}/{repo}/analytics/issues?days=1..180` returns opened, closed, currently open, average resolution time, stale count, and daily trends. Issues are stale after 30 days without an update.
 - `GET /api/repositories/{owner}/{repo}/health?days=30..180` returns the deterministic 0–100 health score, state, thresholds, weighted signals, and metric-backed recommendations.
+- `GET /api/repositories/{owner}/{repo}/analytics/pulls/details?days=1..180` returns PR dashboard metrics, aging buckets, sortable rows, and reviews. Average time-to-merge is the arithmetic mean from creation to merge; median is the middle duration (or mean of the two middle durations).
+- `GET /api/repositories/{owner}/{repo}/analytics/issues/details?days=1..180` returns issue dashboard metrics, aging buckets, sortable rows, and stale markers. Resolution time is measured from creation to closure.
+- `GET /api/repositories/{owner}/{repo}/analytics/contributors?days=1..180` returns normalized contributor identities and activity. Contribution percentage is each contributor's equal-weight share of commits, opened PRs, submitted reviews, and opened issues in the period.
 
 Durations are reported in days. Rates and signal scores are percentages. Health weights can be overridden with `HEALTH_WEIGHT_<SIGNAL>` environment variables; thresholds use `HEALTHY_THRESHOLD` and `ATTENTION_THRESHOLD`.
+
+PR aging buckets are inclusive: 0–3, 4–7, 8–14, 15–30, and over 30 days. Issue buckets are 0–7, 8–14, 15–30, 31–60, and over 60 days. PR inactivity is 14 days without an update; issue staleness is 30 days.
