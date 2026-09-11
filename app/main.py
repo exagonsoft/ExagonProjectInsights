@@ -1,6 +1,7 @@
 import os
 from datetime import datetime, timedelta, timezone
 
+from fastapi.staticfiles import StaticFiles
 import requests
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
@@ -10,7 +11,8 @@ from .analytics import commit_activity, issue_activity, language_statistics, pul
 from .health import calculate_health
 from .intelligence import contributor_details, issue_details, pull_request_details
 
-app = FastAPI(title="Exagon Project Insights", version="0.2.0")
+app = FastAPI(title="Exagon Project Insights", version="0.3.0")
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 def client() -> GitHubClient:
@@ -320,7 +322,7 @@ def dashboard() -> str:
   <main class="shell">
     <nav class="topbar">
       <div class="brand">
-        <div class="brand-mark">E</div>
+        <div class="brand-mark"><img src="./static/icon.png" alt="Exagon Project Insights" class="brand-mark"/></div>
         <div><div class="brand-title">Exagon Project Insights</div><div class="brand-sub">Developer intelligence for GitHub</div></div>
       </div>
       <div class="status"><span class="dot"></span> GitHub App connected</div>
