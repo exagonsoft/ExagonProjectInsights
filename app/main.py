@@ -108,7 +108,7 @@ def dashboard() -> str:
         radial-gradient(circle at 88% 8%, rgba(6,182,212,.13), transparent 28%),
         var(--bg);
     }
-    button, select { font: inherit; }
+    button, input, select { font: inherit; }
     a { color: inherit; text-decoration: none; }
     .shell { width: min(1440px, calc(100% - 40px)); margin: 0 auto; padding: 28px 0 52px; }
     .topbar { display:flex; align-items:center; justify-content:space-between; gap:24px; margin-bottom:42px; }
@@ -126,14 +126,21 @@ def dashboard() -> str:
     .eyebrow { color:#a78bfa; text-transform:uppercase; letter-spacing:.16em; font-size:11px; font-weight:800; margin-bottom:12px; }
     h1 { margin:0; font-size:clamp(34px, 5vw, 62px); line-height:.98; letter-spacing:-.055em; max-width:780px; }
     .hero-copy { margin:17px 0 0; color:var(--muted); font-size:16px; line-height:1.65; max-width:720px; }
-    .selector-wrap { justify-self:end; width:100%; max-width:410px; }
+    .selector-wrap { justify-self:end; width:100%; max-width:540px; }
+    .repository-tools { display:grid; grid-template-columns:minmax(0, 1.35fr) minmax(130px, .65fr) minmax(150px, .8fr); gap:9px; }
+    .control-shell { position:relative; }
+    .control-icon { position:absolute; left:14px; top:50%; transform:translateY(-50%); color:#778399; pointer-events:none; }
+    input, select {
+      width:100%; color:var(--text); background:rgba(17,23,39,.9); border:1px solid var(--border);
+      border-radius:12px; padding:13px 38px 13px 14px; outline:none; box-shadow:var(--shadow);
+    }
+    input { padding-left:39px; }
+    input::placeholder { color:#68748a; }
+    input:focus, select:focus { border-color:rgba(139,92,246,.65); box-shadow:0 0 0 4px rgba(139,92,246,.11); }
+    .repository-count { color:var(--muted); font-size:11px; margin:8px 3px 0; min-height:16px; }
     .label { display:block; color:#9aa5ba; font-size:11px; text-transform:uppercase; letter-spacing:.12em; font-weight:800; margin:0 0 8px 4px; }
     .select-shell { position:relative; }
-    select {
-      width:100%; appearance:none; color:var(--text); background:rgba(17,23,39,.9); border:1px solid var(--border);
-      border-radius:14px; padding:15px 44px 15px 16px; outline:none; cursor:pointer; box-shadow:var(--shadow);
-    }
-    select:focus { border-color:rgba(139,92,246,.65); box-shadow:0 0 0 4px rgba(139,92,246,.11); }
+    select { appearance:none; cursor:pointer; }
     .chevron { position:absolute; right:16px; top:50%; transform:translateY(-50%); pointer-events:none; color:#9aa5ba; }
     .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:28px; }
     .stat, .panel { background:linear-gradient(180deg, rgba(20,27,45,.82), rgba(13,18,31,.82)); border:1px solid var(--border); box-shadow:var(--shadow); backdrop-filter:blur(18px); }
@@ -166,7 +173,7 @@ def dashboard() -> str:
     footer { color:#59647a; text-align:center; font-size:11px; margin-top:30px; }
     @keyframes pulse { 50% { opacity:.45; } }
     @media (max-width: 980px) { .hero, .workspace { grid-template-columns:1fr; } .selector-wrap { justify-self:stretch; max-width:none; } }
-    @media (max-width: 700px) { .shell { width:min(100% - 24px, 1440px); padding-top:18px; } .topbar { margin-bottom:30px; } .status { display:none; } .stats { grid-template-columns:1fr 1fr; } h1 { font-size:39px; } }
+    @media (max-width: 700px) { .shell { width:min(100% - 24px, 1440px); padding-top:18px; } .topbar { margin-bottom:30px; } .status { display:none; } .stats { grid-template-columns:1fr 1fr; } .repository-tools { grid-template-columns:1fr 1fr; } .repository-tools .control-shell:first-child { grid-column:1 / -1; } h1 { font-size:39px; } }
     @media (max-width: 430px) { .stats { grid-template-columns:1fr; } }
   </style>
 </head>
@@ -187,11 +194,38 @@ def dashboard() -> str:
         <p class="hero-copy">A focused workspace for repository health, collaboration signals, issues and pull requests — powered directly by GitHub.</p>
       </div>
       <div class="selector-wrap">
-        <label class="label" for="repo">Repository</label>
+        <label class="label" for="repo-search">Find a repository</label>
+        <div class="repository-tools">
+          <div class="control-shell">
+            <span class="control-icon">⌕</span>
+            <input id="repo-search" type="search" placeholder="Search by name…" autocomplete="off">
+          </div>
+          <div class="select-shell">
+            <select id="repo-filter" aria-label="Filter repositories">
+              <option value="all">All repositories</option>
+              <option value="active">Active</option>
+              <option value="archived">Archived</option>
+              <option value="public">Public</option>
+              <option value="private">Private</option>
+            </select>
+            <span class="chevron">⌄</span>
+          </div>
+          <div class="select-shell">
+            <select id="repo-sort" aria-label="Sort repositories">
+              <option value="name">Name</option>
+              <option value="stars">Stars</option>
+              <option value="forks">Forks</option>
+              <option value="updated">Last updated</option>
+              <option value="issues">Open issues</option>
+            </select>
+            <span class="chevron">⌄</span>
+          </div>
+        </div>
         <div class="select-shell">
-          <select id="repo"><option>Loading repositories…</option></select>
+          <select id="repo" aria-label="Repository"><option>Loading repositories…</option></select>
           <span class="chevron">⌄</span>
         </div>
+        <div class="repository-count" id="repository-count" aria-live="polite"></div>
       </div>
     </section>
 
@@ -231,6 +265,10 @@ def dashboard() -> str:
   <script>
     const $ = (id) => document.getElementById(id);
     const repoSelect = $('repo');
+    const repoSearch = $('repo-search');
+    const repoFilter = $('repo-filter');
+    const repoSort = $('repo-sort');
+    let repositories = [];
     let current = null;
 
     const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -244,10 +282,53 @@ def dashboard() -> str:
 
     async function loadRepositories() {
       try {
-        const repos = await api('/api/repositories');
-        repoSelect.innerHTML = repos.map(repo => `<option value="${escapeHtml(repo.full_name)}">${escapeHtml(repo.full_name)}</option>`).join('');
-        await loadRepository();
-      } catch (error) { showError(error); }
+        repositories = await api('/api/repositories');
+        renderRepositories(true);
+      } catch (error) {
+        repoSelect.innerHTML = '<option value="">Repositories unavailable</option>';
+        $('repository-count').textContent = 'Could not load repositories.';
+        showError(error);
+      }
+    }
+
+    function filteredRepositories() {
+      const query = repoSearch.value.trim().toLocaleLowerCase();
+      const filter = repoFilter.value;
+      const visible = repositories.filter(repo => {
+        const matchesSearch = !query || repo.full_name.toLocaleLowerCase().includes(query);
+        const matchesFilter = filter === 'all'
+          || (filter === 'active' && !repo.archived)
+          || (filter === 'archived' && repo.archived)
+          || (filter === 'public' && !repo.private)
+          || (filter === 'private' && repo.private);
+        return matchesSearch && matchesFilter;
+      });
+
+      const sorters = {
+        name: (a, b) => a.full_name.localeCompare(b.full_name),
+        stars: (a, b) => (b.stargazers_count || 0) - (a.stargazers_count || 0),
+        forks: (a, b) => (b.forks_count || 0) - (a.forks_count || 0),
+        updated: (a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0),
+        issues: (a, b) => (b.open_issues_count || 0) - (a.open_issues_count || 0),
+      };
+      return visible.sort(sorters[repoSort.value] || sorters.name);
+    }
+
+    async function renderRepositories(loadSelected = false) {
+      const previous = repoSelect.value;
+      const visible = filteredRepositories();
+      $('repository-count').textContent = `${visible.length} of ${repositories.length} accessible repositories`;
+
+      if (!visible.length) {
+        repoSelect.innerHTML = '<option value="">No repositories match these filters</option>';
+        repoSelect.disabled = true;
+        return;
+      }
+
+      repoSelect.disabled = false;
+      repoSelect.innerHTML = visible.map(repo => `<option value="${escapeHtml(repo.full_name)}">${escapeHtml(repo.full_name)}</option>`).join('');
+      if (visible.some(repo => repo.full_name === previous)) repoSelect.value = previous;
+      if (loadSelected || repoSelect.value !== previous) await loadRepository();
     }
 
     async function loadRepository() {
@@ -306,6 +387,9 @@ def dashboard() -> str:
       loadTab(button.dataset.tab);
     }));
     repoSelect.addEventListener('change', loadRepository);
+    repoSearch.addEventListener('input', () => renderRepositories());
+    repoFilter.addEventListener('change', () => renderRepositories());
+    repoSort.addEventListener('change', () => renderRepositories());
     loadRepositories();
   </script>
 </body>
