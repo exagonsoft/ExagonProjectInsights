@@ -53,3 +53,14 @@ The current application only needs read access to:
 - Pull requests
 
 The project follows GitHub's principle of requesting the minimum permissions required for its functionality.
+
+## Analytics API
+
+Analytics are calculated from GitHub App installation data and never use mocked values.
+
+- `GET /api/repositories/{owner}/{repo}/analytics/commits?days=30|90|180` returns daily and weekly commit series, active contributors, and the ten latest commits.
+- `GET /api/repositories/{owner}/{repo}/analytics/pulls?days=1..180` returns opened, merged, closed, currently open, merge rate, average age of currently open PRs, and daily trends.
+- `GET /api/repositories/{owner}/{repo}/analytics/issues?days=1..180` returns opened, closed, currently open, average resolution time, stale count, and daily trends. Issues are stale after 30 days without an update.
+- `GET /api/repositories/{owner}/{repo}/health?days=30..180` returns the deterministic 0–100 health score, state, thresholds, weighted signals, and metric-backed recommendations.
+
+Durations are reported in days. Rates and signal scores are percentages. Health weights can be overridden with `HEALTH_WEIGHT_<SIGNAL>` environment variables; thresholds use `HEALTHY_THRESHOLD` and `ATTENTION_THRESHOLD`.
