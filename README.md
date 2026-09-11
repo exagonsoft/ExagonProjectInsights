@@ -65,7 +65,10 @@ Analytics are calculated from GitHub App installation data and never use mocked 
 - `GET /api/repositories/{owner}/{repo}/analytics/pulls/details?days=1..180` returns PR dashboard metrics, aging buckets, sortable rows, and reviews. Average time-to-merge is the arithmetic mean from creation to merge; median is the middle duration (or mean of the two middle durations).
 - `GET /api/repositories/{owner}/{repo}/analytics/issues/details?days=1..180` returns issue dashboard metrics, aging buckets, sortable rows, and stale markers. Resolution time is measured from creation to closure.
 - `GET /api/repositories/{owner}/{repo}/analytics/contributors?days=1..180` returns normalized contributor identities and activity. Contribution percentage is each contributor's equal-weight share of commits, opened PRs, submitted reviews, and opened issues in the period.
+- `GET /api/repositories/{owner}/{repo}/languages` returns GitHub-detected languages, byte counts, and percentages calculated as `language bytes / total positive language bytes × 100`. Empty and zero-byte results return an empty list.
 
 Durations are reported in days. Rates and signal scores are percentages. Health weights can be overridden with `HEALTH_WEIGHT_<SIGNAL>` environment variables; thresholds use `HEALTHY_THRESHOLD` and `ATTENTION_THRESHOLD`.
 
 PR aging buckets are inclusive: 0–3, 4–7, 8–14, 15–30, and over 30 days. Issue buckets are 0–7, 8–14, 15–30, 31–60, and over 60 days. PR inactivity is 14 days without an update; issue staleness is 30 days.
+
+The bus-factor signal requires at least two active contributors and warns when the top contributor's commit share meets `BUS_FACTOR_CONCENTRATION_THRESHOLD` (70% by default). Its health payload includes the threshold, contributor count, top share, supporting contributors, and an explanation.

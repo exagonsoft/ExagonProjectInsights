@@ -2,7 +2,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
-from app.analytics import commit_activity, issue_activity, pull_request_activity
+from app.analytics import commit_activity, issue_activity, language_statistics, pull_request_activity
 from app.health import calculate_health
 
 
@@ -50,6 +50,25 @@ class AnalyticsTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertGreaterEqual(first["score"], 0)
         self.assertLessEqual(first["score"], 100)
+
+    def test_language_statistics_use_positive_github_bytes(self):
+        result = language_statistics({"Python": 75, "JavaScript": 25, "Empty": 0})
+        self.assertEqual(result["total_bytes"], 100)
+        self.assertEqual(result["languages"], [
+            {"language": "Python", "bytes": 75, "percentage": 75.0},
+            {"language": "JavaScript", "bytes": 25, "percentage": 25.0},
+        ])
+
+    @patch.dict("os.environ", {"BUS_FACTOR_CONCENTRATION_THRESHOLD": "70"}, clear=True)
+    def test_bus_factor_requires_enough_contributors(self):
+        repository = {"pushed_at": stamp(1)}
+        pulls = {"opened": 0, "merge_rate": 0, "average_open_age_days": None}
+        issues = {"opened": 0, "closed": 0, "currently_open": 0, "stale": 0, "stale_after_days": 30}
+        insufficient = calculate_health(repository, {"total_commits": 10, "range_days": 30, "active_contributors": [{"login": "a", "commits": 10}]}, pulls, issues)
+        concentrated = calculate_health(repository, {"total_commits": 10, "range_days": 30, "active_contributors": [{"login": "a", "commits": 8}, {"login": "b", "commits": 2}]}, pulls, issues)
+        self.assertFalse(insufficient["bus_factor"]["warning"])
+        self.assertFalse(insufficient["bus_factor"]["sufficient_data"])
+        self.assertTrue(concentrated["bus_factor"]["warning"])
 
 
 if __name__ == "__main__":
