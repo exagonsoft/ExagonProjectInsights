@@ -1,10 +1,12 @@
 import os
 
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
 from .github_client import GitHubClient
+from .analytics import commit_activity, issue_activity, pull_request_activity
+from .health import calculate_health
 
 app = FastAPI(title="Exagon Project Insights", version="0.2.0")
 
@@ -69,6 +71,48 @@ def issues(owner: str, repo: str, state: str = "open") -> list[dict]:
 def pull_requests(owner: str, repo: str, state: str = "open") -> list[dict]:
     try:
         return client().pull_requests(owner, repo, state)
+    except requests.HTTPError as exc:
+        raise github_error(exc) from exc
+
+
+def analytics_data(owner: str, repo: str, days: int) -> tuple[dict, dict, dict, dict]:
+    github = client()
+    repository_data = github.repository(owner, repo)
+    commits = commit_activity(github.commits(owner, repo, days), days)
+    pulls = pull_request_activity(github.pull_requests(owner, repo, "all"), days)
+    issues = issue_activity(github.issues(owner, repo, "all"), days)
+    return repository_data, commits, pulls, issues
+
+
+@app.get("/api/repositories/{owner}/{repo}/analytics/commits")
+def commits_analytics(owner: str, repo: str, days: int = Query(30, enum=[30, 90, 180])) -> dict:
+    try:
+        return commit_activity(client().commits(owner, repo, days), days)
+    except requests.HTTPError as exc:
+        raise github_error(exc) from exc
+
+
+@app.get("/api/repositories/{owner}/{repo}/analytics/pulls")
+def pulls_analytics(owner: str, repo: str, days: int = Query(180, ge=1, le=180)) -> dict:
+    try:
+        return pull_request_activity(client().pull_requests(owner, repo, "all"), days)
+    except requests.HTTPError as exc:
+        raise github_error(exc) from exc
+
+
+@app.get("/api/repositories/{owner}/{repo}/analytics/issues")
+def issues_analytics(owner: str, repo: str, days: int = Query(180, ge=1, le=180)) -> dict:
+    try:
+        return issue_activity(client().issues(owner, repo, "all"), days)
+    except requests.HTTPError as exc:
+        raise github_error(exc) from exc
+
+
+@app.get("/api/repositories/{owner}/{repo}/health")
+def repository_health(owner: str, repo: str, days: int = Query(180, ge=30, le=180)) -> dict:
+    try:
+        repository_data, commits, pulls, issues = analytics_data(owner, repo, days)
+        return calculate_health(repository_data, commits, pulls, issues)
     except requests.HTTPError as exc:
         raise github_error(exc) from exc
 
@@ -138,6 +182,8 @@ def dashboard() -> str:
     input::placeholder { color:#68748a; }
     input:focus, select:focus { border-color:rgba(139,92,246,.65); box-shadow:0 0 0 4px rgba(139,92,246,.11); }
     .repository-count { color:var(--muted); font-size:11px; margin:8px 3px 0; min-height:16px; }
+    .favorite-button { border:1px solid var(--border); background:rgba(148,163,184,.06); color:#94a3b8; border-radius:10px; padding:8px 11px; cursor:pointer; }
+    .favorite-button.active { color:#facc15; border-color:rgba(250,204,21,.3); background:rgba(250,204,21,.08); }
     .label { display:block; color:#9aa5ba; font-size:11px; text-transform:uppercase; letter-spacing:.12em; font-weight:800; margin:0 0 8px 4px; }
     .select-shell { position:relative; }
     select { appearance:none; cursor:pointer; }
@@ -170,9 +216,26 @@ def dashboard() -> str:
     .empty { color:var(--muted); text-align:center; padding:32px 10px; font-size:13px; }
     .loading { animation:pulse 1.4s ease-in-out infinite; color:#667085; }
     .error { margin-top:20px; padding:14px 16px; border:1px solid rgba(248,113,113,.2); background:rgba(248,113,113,.06); border-radius:12px; color:#fca5a5; font-size:13px; }
+    .analytics { margin-top:18px; }
+    .analytics-grid { display:grid; grid-template-columns:1.5fr .85fr; gap:18px; }
+    .chart-wrap { padding:18px 22px 22px; min-height:260px; }
+    .chart { width:100%; height:190px; overflow:visible; }
+    .chart-line { fill:none; stroke:url(#chartGradient); stroke-width:3; vector-effect:non-scaling-stroke; }
+    .chart-area { fill:url(#areaGradient); }
+    .chart-dot { fill:#22d3ee; stroke:#0f172a; stroke-width:2; }
+    .range-buttons { display:flex; gap:5px; }
+    .range-button { border:0; color:var(--muted); background:transparent; padding:7px 9px; border-radius:8px; cursor:pointer; font-size:11px; font-weight:750; }
+    .range-button.active { color:#fff; background:rgba(139,92,246,.16); }
+    .health-score { font-size:48px; line-height:1; font-weight:850; letter-spacing:-.06em; }
+    .health-state { display:inline-block; margin:9px 0 14px; padding:6px 9px; border-radius:999px; font-size:11px; font-weight:800; text-transform:uppercase; }
+    .health-state.healthy { color:#6ee7b7; background:rgba(52,211,153,.1); }
+    .health-state.needs_attention { color:#fde68a; background:rgba(250,204,21,.1); }
+    .health-state.at_risk { color:#fca5a5; background:rgba(248,113,113,.1); }
+    .signal-row { display:grid; grid-template-columns:1fr auto; gap:12px; padding:8px 0; border-bottom:1px solid rgba(148,163,184,.08); font-size:11px; color:var(--muted); }
+    .recommendation { padding:10px 0; border-bottom:1px solid rgba(148,163,184,.08); color:#cbd5e1; font-size:12px; line-height:1.5; }
     footer { color:#59647a; text-align:center; font-size:11px; margin-top:30px; }
     @keyframes pulse { 50% { opacity:.45; } }
-    @media (max-width: 980px) { .hero, .workspace { grid-template-columns:1fr; } .selector-wrap { justify-self:stretch; max-width:none; } }
+    @media (max-width: 980px) { .hero, .workspace, .analytics-grid { grid-template-columns:1fr; } .selector-wrap { justify-self:stretch; max-width:none; } }
     @media (max-width: 700px) { .shell { width:min(100% - 24px, 1440px); padding-top:18px; } .topbar { margin-bottom:30px; } .status { display:none; } .stats { grid-template-columns:1fr 1fr; } .repository-tools { grid-template-columns:1fr 1fr; } .repository-tools .control-shell:first-child { grid-column:1 / -1; } h1 { font-size:39px; } }
     @media (max-width: 430px) { .stats { grid-template-columns:1fr; } }
   </style>
@@ -240,7 +303,7 @@ def dashboard() -> str:
       <article class="panel">
         <div class="panel-head">
           <div><div class="panel-title" id="repo-name">Repository overview</div><div class="panel-sub" id="branch">Loading…</div></div>
-          <a class="repo-link" id="github-link" href="#" target="_blank" rel="noreferrer">Open on GitHub ↗</a>
+          <div><button class="favorite-button" id="favorite" type="button" aria-label="Favorite repository">☆</button> <a class="repo-link" id="github-link" href="#" target="_blank" rel="noreferrer">Open on GitHub ↗</a></div>
         </div>
         <div class="repo-description" id="description">Loading repository details…</div>
         <div class="meta"><span class="pill" id="repo-id">—</span><span class="pill">GitHub App</span><span class="pill">Live data</span></div>
@@ -258,6 +321,20 @@ def dashboard() -> str:
       </aside>
     </section>
 
+    <section class="analytics analytics-grid">
+      <article class="panel">
+        <div class="panel-head">
+          <div><div class="panel-title">Commit activity</div><div class="panel-sub" id="commit-summary">Real GitHub commit history</div></div>
+          <div class="range-buttons"><button class="range-button active" data-days="30">30d</button><button class="range-button" data-days="90">90d</button><button class="range-button" data-days="180">180d</button></div>
+        </div>
+        <div class="chart-wrap" id="commit-chart"><div class="empty loading">Loading commit activity…</div></div>
+      </article>
+      <article class="panel">
+        <div class="panel-head"><div><div class="panel-title">Health intelligence</div><div class="panel-sub">Deterministic repository signals</div></div></div>
+        <div class="repo-description" id="health-panel"><div class="empty loading">Calculating health…</div></div>
+      </article>
+    </section>
+
     <div id="error"></div>
     <footer>Exagon Project Insights · GitHub App integration · Built by ExagonSoft</footer>
   </main>
@@ -270,6 +347,8 @@ def dashboard() -> str:
     const repoSort = $('repo-sort');
     let repositories = [];
     let current = null;
+    let analyticsDays = 30;
+    let favorites = new Set(JSON.parse(localStorage.getItem('exagon-favorite-repositories') || '[]'));
 
     const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
     const shortNumber = (value) => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(value ?? 0);
@@ -311,7 +390,10 @@ def dashboard() -> str:
         updated: (a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0),
         issues: (a, b) => (b.open_issues_count || 0) - (a.open_issues_count || 0),
       };
-      return visible.sort(sorters[repoSort.value] || sorters.name);
+      return visible.sort((a, b) => {
+        const favoriteOrder = Number(favorites.has(b.full_name)) - Number(favorites.has(a.full_name));
+        return favoriteOrder || (sorters[repoSort.value] || sorters.name)(a, b);
+      });
     }
 
     async function renderRepositories(loadSelected = false) {
@@ -326,7 +408,7 @@ def dashboard() -> str:
       }
 
       repoSelect.disabled = false;
-      repoSelect.innerHTML = visible.map(repo => `<option value="${escapeHtml(repo.full_name)}">${escapeHtml(repo.full_name)}</option>`).join('');
+      repoSelect.innerHTML = visible.map(repo => `<option value="${escapeHtml(repo.full_name)}">${favorites.has(repo.full_name) ? '★ ' : ''}${escapeHtml(repo.full_name)}</option>`).join('');
       if (visible.some(repo => repo.full_name === previous)) repoSelect.value = previous;
       if (loadSelected || repoSelect.value !== previous) await loadRepository();
     }
@@ -347,15 +429,79 @@ def dashboard() -> str:
         $('description').textContent = current.description || 'No description has been added to this repository yet.';
         $('repo-id').textContent = current.default_branch;
         $('github-link').href = current.html_url;
-        updateHealth();
-        await loadTab('issues');
+        updateFavoriteButton();
+        await Promise.all([loadTab('issues'), loadCommitActivity(), loadHealth()]);
       } catch (error) { showError(error); }
     }
 
-    function updateHealth() {
-      const open = current.open_issues || 0;
-      $('health-message').textContent = open === 0 ? 'Clean workspace' : `${open} open issue${open === 1 ? '' : 's'}`;
-      $('health-detail').textContent = open === 0 ? 'No open issues are currently reported by GitHub.' : 'Review the issue queue to keep project work moving.';
+    function updateFavoriteButton() {
+      const active = current && favorites.has(current.full_name);
+      $('favorite').classList.toggle('active', active);
+      $('favorite').textContent = active ? '★' : '☆';
+      $('favorite').setAttribute('aria-label', active ? 'Unfavorite repository' : 'Favorite repository');
+    }
+
+    function toggleFavorite() {
+      if (!current) return;
+      favorites.has(current.full_name) ? favorites.delete(current.full_name) : favorites.add(current.full_name);
+      localStorage.setItem('exagon-favorite-repositories', JSON.stringify([...favorites]));
+      updateFavoriteButton();
+      renderRepositories();
+    }
+
+    async function loadCommitActivity() {
+      if (!current) return;
+      const [owner, repo] = current.full_name.split('/', 2);
+      $('commit-chart').innerHTML = '<div class="empty loading">Loading commit activity…</div>';
+      try {
+        const data = await api(`/api/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/analytics/commits?days=${analyticsDays}`);
+        $('commit-summary').textContent = `${data.total_commits} commits · ${data.active_contributors.length} active contributors`;
+        renderCommitChart(data.commits_per_day);
+      } catch (error) {
+        $('commit-chart').innerHTML = '<div class="empty">Commit activity is unavailable.</div>';
+        showError(error);
+      }
+    }
+
+    function renderCommitChart(points) {
+      if (!points.some(point => point.count)) {
+        $('commit-chart').innerHTML = '<div class="empty">No commits in this period.</div>';
+        return;
+      }
+      const width = 800, height = 190, pad = 12;
+      const max = Math.max(...points.map(point => point.count), 1);
+      const coords = points.map((point, index) => ({
+        ...point,
+        x: pad + index * (width - pad * 2) / Math.max(points.length - 1, 1),
+        y: height - pad - point.count / max * (height - pad * 2),
+      }));
+      const line = coords.map(point => `${point.x},${point.y}`).join(' ');
+      const area = `${pad},${height - pad} ${line} ${width - pad},${height - pad}`;
+      $('commit-chart').innerHTML = `<svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Commit activity over ${analyticsDays} days">
+        <defs><linearGradient id="chartGradient"><stop stop-color="#8b5cf6"/><stop offset="1" stop-color="#22d3ee"/></linearGradient><linearGradient id="areaGradient" x2="0" y2="1"><stop stop-color="#8b5cf6" stop-opacity=".25"/><stop offset="1" stop-color="#8b5cf6" stop-opacity="0"/></linearGradient></defs>
+        <polygon class="chart-area" points="${area}"/><polyline class="chart-line" points="${line}"/>
+        ${coords.filter(point => point.count).map(point => `<circle class="chart-dot" cx="${point.x}" cy="${point.y}" r="4"><title>${escapeHtml(point.date)}: ${point.count} commits</title></circle>`).join('')}
+      </svg>`;
+    }
+
+    async function loadHealth() {
+      if (!current) return;
+      const [owner, repo] = current.full_name.split('/', 2);
+      $('health-panel').innerHTML = '<div class="empty loading">Calculating health…</div>';
+      try {
+        const health = await api(`/api/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/health?days=180`);
+        const label = health.state === 'healthy' ? 'Healthy' : health.state === 'needs_attention' ? 'Needs attention' : 'At risk';
+        $('health-message').textContent = `${health.score}/100 · ${label}`;
+        $('health-detail').textContent = health.recommendations.length ? health.recommendations[0].message : 'No concerning health signals detected.';
+        $('health-panel').innerHTML = `<div class="health-score">${health.score}</div><span class="health-state ${health.state}">${label}</span>
+          ${health.signals.map(signal => `<div class="signal-row"><span>${escapeHtml(signal.name.replaceAll('_', ' '))}</span><strong>${signal.score}</strong></div>`).join('')}
+          <div style="margin-top:15px;font-weight:750;font-size:12px">Recommendations</div>
+          ${health.recommendations.length ? health.recommendations.map(item => `<div class="recommendation">${escapeHtml(item.message)} <span style="color:#8d98ad">(${escapeHtml(item.signal)}: ${escapeHtml(item.metric)})</span></div>`).join('') : '<div class="empty">No action needed.</div>'}`;
+      } catch (error) {
+        $('health-panel').innerHTML = '<div class="empty">Health data is unavailable.</div>';
+        $('health-message').textContent = 'Unavailable';
+        showError(error);
+      }
     }
 
     async function loadTab(tab) {
@@ -390,6 +536,13 @@ def dashboard() -> str:
     repoSearch.addEventListener('input', () => renderRepositories());
     repoFilter.addEventListener('change', () => renderRepositories());
     repoSort.addEventListener('change', () => renderRepositories());
+    $('favorite').addEventListener('click', toggleFavorite);
+    document.querySelectorAll('.range-button').forEach(button => button.addEventListener('click', () => {
+      document.querySelectorAll('.range-button').forEach(item => item.classList.remove('active'));
+      button.classList.add('active');
+      analyticsDays = Number(button.dataset.days);
+      loadCommitActivity();
+    }));
     loadRepositories();
   </script>
 </body>
