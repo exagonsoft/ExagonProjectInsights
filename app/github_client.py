@@ -108,3 +108,12 @@ class GitHubClient:
             if exc.response is not None and exc.response.status_code == 409:
                 return []
             raise
+
+    def reviews(self, owner: str, repo: str, pull_number: int) -> list[dict]:
+        installation = self.get_installation(owner)
+        token = self.installation_token(installation["id"])
+        return self._paginate(
+            f"{GITHUB_API}/repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+            token,
+            max_pages=3,
+        )

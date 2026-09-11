@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta, timezone
 
 import requests
 from fastapi import FastAPI, HTTPException, Query
@@ -7,6 +8,7 @@ from fastapi.responses import HTMLResponse
 from .github_client import GitHubClient
 from .analytics import commit_activity, issue_activity, pull_request_activity
 from .health import calculate_health
+from .intelligence import contributor_details, issue_details, pull_request_details
 
 app = FastAPI(title="Exagon Project Insights", version="0.2.0")
 
@@ -113,6 +115,45 @@ def repository_health(owner: str, repo: str, days: int = Query(180, ge=30, le=18
     try:
         repository_data, commits, pulls, issues = analytics_data(owner, repo, days)
         return calculate_health(repository_data, commits, pulls, issues)
+    except requests.HTTPError as exc:
+        raise github_error(exc) from exc
+
+
+def reviews_for_period(github: GitHubClient, owner: str, repo: str, pulls: list[dict], days: int) -> dict[int, list[dict]]:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    recent = [item for item in pulls if item.get("created_at") and datetime.fromisoformat(item["created_at"].replace("Z", "+00:00")) >= cutoff]
+    return {item["number"]: github.reviews(owner, repo, item["number"]) for item in recent[:100]}
+
+
+@app.get("/api/repositories/{owner}/{repo}/analytics/pulls/details")
+def pulls_details(owner: str, repo: str, days: int = Query(180, ge=1, le=180)) -> dict:
+    try:
+        github = client()
+        pulls = github.pull_requests(owner, repo, "all")
+        return pull_request_details(pulls, reviews_for_period(github, owner, repo, pulls, days), days)
+    except requests.HTTPError as exc:
+        raise github_error(exc) from exc
+
+
+@app.get("/api/repositories/{owner}/{repo}/analytics/issues/details")
+def issues_details(owner: str, repo: str, days: int = Query(180, ge=1, le=180)) -> dict:
+    try:
+        return issue_details(client().issues(owner, repo, "all"), days)
+    except requests.HTTPError as exc:
+        raise github_error(exc) from exc
+
+
+@app.get("/api/repositories/{owner}/{repo}/analytics/contributors")
+def contributors(owner: str, repo: str, days: int = Query(180, ge=1, le=180)) -> dict:
+    try:
+        github = client()
+        commits = github.commits(owner, repo, days)
+        pulls = github.pull_requests(owner, repo, "all")
+        issues = github.issues(owner, repo, "all")
+        reviews = reviews_for_period(github, owner, repo, pulls, days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        recent = lambda items: [item for item in items if item.get("created_at") and datetime.fromisoformat(item["created_at"].replace("Z", "+00:00")) >= cutoff]
+        return contributor_details(commits, recent(pulls), recent(issues), reviews, days)
     except requests.HTTPError as exc:
         raise github_error(exc) from exc
 
@@ -233,10 +274,28 @@ def dashboard() -> str:
     .health-state.at_risk { color:#fca5a5; background:rgba(248,113,113,.1); }
     .signal-row { display:grid; grid-template-columns:1fr auto; gap:12px; padding:8px 0; border-bottom:1px solid rgba(148,163,184,.08); font-size:11px; color:var(--muted); }
     .recommendation { padding:10px 0; border-bottom:1px solid rgba(148,163,184,.08); color:#cbd5e1; font-size:12px; line-height:1.5; }
+    .intelligence { margin-top:18px; }
+    .intelligence-body { padding:20px 22px 24px; }
+    .metric-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:18px; }
+    .metric-card { padding:14px; border:1px solid var(--border); border-radius:13px; background:rgba(148,163,184,.04); }
+    .metric-label { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
+    .metric-value { font-size:21px; font-weight:800; margin-top:7px; }
+    .buckets { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin:16px 0; }
+    .bucket { border:1px solid var(--border); color:var(--muted); background:rgba(148,163,184,.04); padding:11px; border-radius:11px; text-align:left; cursor:pointer; }
+    .bucket.active { color:#fff; border-color:rgba(139,92,246,.55); background:rgba(139,92,246,.12); }
+    .bucket strong { display:block; color:var(--text); font-size:18px; margin-top:4px; }
+    .table-wrap { overflow:auto; border:1px solid var(--border); border-radius:13px; }
+    table { width:100%; border-collapse:collapse; min-width:720px; }
+    th, td { padding:11px 13px; text-align:left; border-bottom:1px solid rgba(148,163,184,.08); font-size:11px; }
+    th { color:var(--muted); text-transform:uppercase; letter-spacing:.07em; background:rgba(8,11,20,.45); cursor:pointer; }
+    td { color:#cbd5e1; }
+    .person { display:flex; align-items:center; gap:8px; }
+    .avatar { width:25px; height:25px; border-radius:50%; background:#1e293b; }
+    .analytics-filter { color:var(--text); background:rgba(17,23,39,.9); border:1px solid var(--border); border-radius:9px; padding:8px 10px; }
     footer { color:#59647a; text-align:center; font-size:11px; margin-top:30px; }
     @keyframes pulse { 50% { opacity:.45; } }
     @media (max-width: 980px) { .hero, .workspace, .analytics-grid { grid-template-columns:1fr; } .selector-wrap { justify-self:stretch; max-width:none; } }
-    @media (max-width: 700px) { .shell { width:min(100% - 24px, 1440px); padding-top:18px; } .topbar { margin-bottom:30px; } .status { display:none; } .stats { grid-template-columns:1fr 1fr; } .repository-tools { grid-template-columns:1fr 1fr; } .repository-tools .control-shell:first-child { grid-column:1 / -1; } h1 { font-size:39px; } }
+    @media (max-width: 700px) { .shell { width:min(100% - 24px, 1440px); padding-top:18px; } .topbar { margin-bottom:30px; } .status { display:none; } .stats { grid-template-columns:1fr 1fr; } .repository-tools { grid-template-columns:1fr 1fr; } .repository-tools .control-shell:first-child { grid-column:1 / -1; } .metric-grid { grid-template-columns:1fr 1fr; } .buckets { grid-template-columns:1fr 1fr; } h1 { font-size:39px; } }
     @media (max-width: 430px) { .stats { grid-template-columns:1fr; } }
   </style>
 </head>
@@ -335,6 +394,14 @@ def dashboard() -> str:
       </article>
     </section>
 
+    <section class="panel intelligence">
+      <div class="panel-head">
+        <div><div class="panel-title">Activity intelligence</div><div class="panel-sub">Detailed repository workflows and contributors</div></div>
+        <div class="tabs"><button class="tab intelligence-tab active" data-view="pulls">Pull requests</button><button class="tab intelligence-tab" data-view="issues">Issues</button><button class="tab intelligence-tab" data-view="contributors">Contributors</button></div>
+      </div>
+      <div class="intelligence-body" id="intelligence-body"><div class="empty loading">Loading analytics…</div></div>
+    </section>
+
     <div id="error"></div>
     <footer>Exagon Project Insights · GitHub App integration · Built by ExagonSoft</footer>
   </main>
@@ -348,6 +415,8 @@ def dashboard() -> str:
     let repositories = [];
     let current = null;
     let analyticsDays = 30;
+    let intelligenceView = 'pulls';
+    let intelligenceData = null;
     let favorites = new Set(JSON.parse(localStorage.getItem('exagon-favorite-repositories') || '[]'));
 
     const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -430,7 +499,7 @@ def dashboard() -> str:
         $('repo-id').textContent = current.default_branch;
         $('github-link').href = current.html_url;
         updateFavoriteButton();
-        await Promise.all([loadTab('issues'), loadCommitActivity(), loadHealth()]);
+        await Promise.all([loadTab('issues'), loadCommitActivity(), loadHealth(), loadIntelligence()]);
       } catch (error) { showError(error); }
     }
 
@@ -504,6 +573,64 @@ def dashboard() -> str:
       }
     }
 
+    async function loadIntelligence() {
+      if (!current) return;
+      const [owner, repo] = current.full_name.split('/', 2);
+      $('intelligence-body').innerHTML = '<div class="empty loading">Loading analytics…</div>';
+      const endpoint = intelligenceView === 'pulls' ? 'pulls/details' : intelligenceView === 'issues' ? 'issues/details' : 'contributors';
+      try {
+        intelligenceData = await api(`/api/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/analytics/${endpoint}?days=180`);
+        renderIntelligence();
+      } catch (error) {
+        $('intelligence-body').innerHTML = '<div class="empty">Analytics are unavailable.</div>';
+        showError(error);
+      }
+    }
+
+    function renderIntelligence(bucketLabel = '') {
+      if (intelligenceView === 'contributors') return renderContributors();
+      const data = intelligenceData;
+      const isPull = intelligenceView === 'pulls';
+      const metrics = isPull
+        ? [['Open', data.metrics.open], ['Merged', data.metrics.merged], ['Closed', data.metrics.closed_unmerged], ['Avg. merge', days(data.metrics.average_time_to_merge_days)], ['Median merge', days(data.metrics.median_time_to_merge_days)]]
+        : [['Open', data.metrics.open], ['Closed', data.metrics.closed], ['Stale', data.metrics.stale], ['Avg. resolution', days(data.metrics.average_resolution_days)], ['Oldest open', days(data.metrics.oldest_open?.age_days)]];
+      const rows = bucketLabel ? data.age_buckets.find(bucket => bucket.label === bucketLabel)?.items || [] : data.items;
+      $('intelligence-body').innerHTML = `<div class="metric-grid">${metrics.map(([label, value]) => `<div class="metric-card"><div class="metric-label">${label}</div><div class="metric-value">${value ?? '—'}</div></div>`).join('')}</div>
+        ${data.metrics.oldest_open ? `<a class="repo-link" href="${escapeHtml(data.metrics.oldest_open.html_url)}" target="_blank" rel="noreferrer">Oldest open: #${data.metrics.oldest_open.number} · ${escapeHtml(data.metrics.oldest_open.title)} ↗</a>` : ''}
+        <div class="buckets">${data.age_buckets.map(bucket => `<button class="bucket ${bucketLabel === bucket.label ? 'active' : ''}" data-bucket="${escapeHtml(bucket.label)}">${escapeHtml(bucket.label)}<strong>${bucket.count}</strong></button>`).join('')}</div>
+        ${activityTable(rows, isPull)}`;
+      document.querySelectorAll('.bucket').forEach(button => button.addEventListener('click', () => renderIntelligence(button.classList.contains('active') ? '' : button.dataset.bucket)));
+      bindTableSorting();
+    }
+
+    function days(value) { return value == null ? '—' : `${Number(value).toFixed(1)}d`; }
+
+    function activityTable(rows, isPull) {
+      if (!rows.length) return '<div class="empty">No matching activity.</div>';
+      return `<div class="table-wrap"><table><thead><tr>${(isPull ? ['PR','Author','Created','Age','Reviews','Status'] : ['Issue','Labels','Author','Age','Comments','Status']).map((label, index) => `<th data-column="${index}">${label}</th>`).join('')}</tr></thead><tbody>${rows.map(row => `<tr>
+        <td><a class="repo-link" href="${escapeHtml(row.html_url)}" target="_blank" rel="noreferrer">#${row.number} · ${escapeHtml(row.title)}</a></td>
+        ${isPull ? `<td>${escapeHtml(row.author)}</td><td>${new Date(row.created_at).toLocaleDateString()}</td><td data-sort="${row.age_days}">${days(row.age_days)}</td><td data-sort="${row.reviews}">${row.reviews}</td>` : `<td>${escapeHtml(row.labels.join(', ') || '—')}</td><td>${escapeHtml(row.author)}</td><td data-sort="${row.age_days}">${days(row.age_days)}</td><td data-sort="${row.comments}">${row.comments}</td>`}
+        <td>${escapeHtml(row.stale ? 'stale' : row.status)}</td></tr>`).join('')}</tbody></table></div>`;
+    }
+
+    function bindTableSorting() {
+      document.querySelectorAll('#intelligence-body th').forEach(header => header.addEventListener('click', () => {
+        const body = header.closest('table').tBodies[0];
+        const index = Number(header.dataset.column);
+        [...body.rows].sort((a, b) => {
+          const left = a.cells[index].dataset.sort ?? a.cells[index].textContent.trim();
+          const right = b.cells[index].dataset.sort ?? b.cells[index].textContent.trim();
+          return !isNaN(left) && !isNaN(right) ? Number(left) - Number(right) : left.localeCompare(right);
+        }).forEach(row => body.appendChild(row));
+      }));
+    }
+
+    function renderContributors() {
+      const rows = intelligenceData.contributors;
+      $('intelligence-body').innerHTML = `<div class="metric-grid"><div class="metric-card"><div class="metric-label">Contributors</div><div class="metric-value">${intelligenceData.contributor_count}</div></div></div>
+        ${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Contributor</th><th>Commits</th><th>PRs</th><th>Reviews</th><th>Issues</th><th>Share</th><th>Recent activity</th></tr></thead><tbody>${rows.map(row => `<tr><td><span class="person">${row.avatar_url ? `<img class="avatar" src="${escapeHtml(row.avatar_url)}" alt="">` : ''}${escapeHtml(row.login)}</span></td><td>${row.commits}</td><td>${row.pull_requests}</td><td>${row.reviews}</td><td>${row.issues}</td><td>${row.contribution_percentage}%</td><td>${escapeHtml(row.recent_activity[0]?.title || 'No recent commits')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No contributor activity in this period.</div>'}`;
+    }
+
     async function loadTab(tab) {
       if (!current) return;
       const [owner, repo] = current.full_name.split('/', 2);
@@ -527,8 +654,8 @@ def dashboard() -> str:
       $('error').innerHTML = `<div class="error">${escapeHtml(error.message || 'Something went wrong.')}</div>`;
     }
 
-    document.querySelectorAll('.tab').forEach(button => button.addEventListener('click', () => {
-      document.querySelectorAll('.tab').forEach(item => item.classList.remove('active'));
+    document.querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => {
+      document.querySelectorAll('[data-tab]').forEach(item => item.classList.remove('active'));
       button.classList.add('active');
       loadTab(button.dataset.tab);
     }));
@@ -542,6 +669,12 @@ def dashboard() -> str:
       button.classList.add('active');
       analyticsDays = Number(button.dataset.days);
       loadCommitActivity();
+    }));
+    document.querySelectorAll('.intelligence-tab').forEach(button => button.addEventListener('click', () => {
+      document.querySelectorAll('.intelligence-tab').forEach(item => item.classList.remove('active'));
+      button.classList.add('active');
+      intelligenceView = button.dataset.view;
+      loadIntelligence();
     }));
     loadRepositories();
   </script>
