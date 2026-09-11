@@ -27,6 +27,18 @@ def average_days(values: list[float]) -> float | None:
     return round(sum(values) / len(values), 2) if values else None
 
 
+def language_statistics(languages: dict[str, int]) -> dict:
+    positive = {name: value for name, value in languages.items() if value > 0}
+    total = sum(positive.values())
+    return {
+        "total_bytes": total,
+        "languages": [
+            {"language": name, "bytes": value, "percentage": round(value / total * 100, 2)}
+            for name, value in sorted(positive.items(), key=lambda item: item[1], reverse=True)
+        ] if total else [],
+    }
+
+
 def commit_activity(commits: list[dict], days: int) -> dict:
     contributor_counts = Counter()
     for item in commits:
