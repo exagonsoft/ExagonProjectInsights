@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
 from .github_client import GitHubClient
-from .analytics import commit_activity, issue_activity, pull_request_activity
+from .analytics import commit_activity, issue_activity, language_statistics, pull_request_activity
 from .health import calculate_health
 from .intelligence import contributor_details, issue_details, pull_request_details
 
@@ -158,6 +158,14 @@ def contributors(owner: str, repo: str, days: int = Query(180, ge=1, le=180)) ->
         raise github_error(exc) from exc
 
 
+@app.get("/api/repositories/{owner}/{repo}/languages")
+def repository_languages(owner: str, repo: str) -> dict:
+    try:
+        return language_statistics(client().languages(owner, repo))
+    except requests.HTTPError as exc:
+        raise github_error(exc) from exc
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard() -> str:
     return r'''<!doctype html>
@@ -292,10 +300,19 @@ def dashboard() -> str:
     .person { display:flex; align-items:center; gap:8px; }
     .avatar { width:25px; height:25px; border-radius:50%; background:#1e293b; }
     .analytics-filter { color:var(--text); background:rgba(17,23,39,.9); border:1px solid var(--border); border-radius:9px; padding:8px 10px; }
+    .language-layout { display:grid; grid-template-columns:220px 1fr; gap:26px; align-items:center; padding:22px; }
+    .language-ring { width:180px; aspect-ratio:1; border-radius:50%; position:relative; margin:auto; }
+    .language-ring::after { content:"Languages"; position:absolute; inset:31px; border-radius:50%; display:grid; place-items:center; background:var(--panel-strong); color:var(--muted); font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.08em; }
+    .language-row { display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center; padding:8px 0; font-size:12px; }
+    .language-dot { width:9px; height:9px; border-radius:50%; }
+    .language-bar { height:6px; background:rgba(148,163,184,.08); border-radius:999px; overflow:hidden; }
+    .language-bar span { display:block; height:100%; border-radius:inherit; }
+    .bus-factor { margin-top:14px; padding:12px; border:1px solid var(--border); border-radius:12px; font-size:11px; line-height:1.55; color:var(--muted); }
+    .bus-factor.warning { color:#fde68a; border-color:rgba(250,204,21,.25); background:rgba(250,204,21,.06); }
     footer { color:#59647a; text-align:center; font-size:11px; margin-top:30px; }
     @keyframes pulse { 50% { opacity:.45; } }
     @media (max-width: 980px) { .hero, .workspace, .analytics-grid { grid-template-columns:1fr; } .selector-wrap { justify-self:stretch; max-width:none; } }
-    @media (max-width: 700px) { .shell { width:min(100% - 24px, 1440px); padding-top:18px; } .topbar { margin-bottom:30px; } .status { display:none; } .stats { grid-template-columns:1fr 1fr; } .repository-tools { grid-template-columns:1fr 1fr; } .repository-tools .control-shell:first-child { grid-column:1 / -1; } .metric-grid { grid-template-columns:1fr 1fr; } .buckets { grid-template-columns:1fr 1fr; } h1 { font-size:39px; } }
+    @media (max-width: 700px) { .shell { width:min(100% - 24px, 1440px); padding-top:18px; } .topbar { margin-bottom:30px; } .status { display:none; } .stats { grid-template-columns:1fr 1fr; } .repository-tools { grid-template-columns:1fr 1fr; } .repository-tools .control-shell:first-child { grid-column:1 / -1; } .metric-grid { grid-template-columns:1fr 1fr; } .buckets { grid-template-columns:1fr 1fr; } .language-layout { grid-template-columns:1fr; } h1 { font-size:39px; } }
     @media (max-width: 430px) { .stats { grid-template-columns:1fr; } }
   </style>
 </head>
@@ -402,6 +419,11 @@ def dashboard() -> str:
       <div class="intelligence-body" id="intelligence-body"><div class="empty loading">Loading analytics…</div></div>
     </section>
 
+    <section class="panel intelligence">
+      <div class="panel-head"><div><div class="panel-title">Technology distribution</div><div class="panel-sub">GitHub-detected language bytes and percentages</div></div></div>
+      <div id="language-breakdown"><div class="empty loading">Loading language statistics…</div></div>
+    </section>
+
     <div id="error"></div>
     <footer>Exagon Project Insights · GitHub App integration · Built by ExagonSoft</footer>
   </main>
@@ -499,7 +521,7 @@ def dashboard() -> str:
         $('repo-id').textContent = current.default_branch;
         $('github-link').href = current.html_url;
         updateFavoriteButton();
-        await Promise.all([loadTab('issues'), loadCommitActivity(), loadHealth(), loadIntelligence()]);
+        await Promise.all([loadTab('issues'), loadCommitActivity(), loadHealth(), loadIntelligence(), loadLanguages()]);
       } catch (error) { showError(error); }
     }
 
@@ -564,11 +586,35 @@ def dashboard() -> str:
         $('health-detail').textContent = health.recommendations.length ? health.recommendations[0].message : 'No concerning health signals detected.';
         $('health-panel').innerHTML = `<div class="health-score">${health.score}</div><span class="health-state ${health.state}">${label}</span>
           ${health.signals.map(signal => `<div class="signal-row"><span>${escapeHtml(signal.name.replaceAll('_', ' '))}</span><strong>${signal.score}</strong></div>`).join('')}
+          <div class="bus-factor ${health.bus_factor.warning ? 'warning' : ''}"><strong>Bus-factor signal:</strong> ${escapeHtml(health.bus_factor.explanation)} ${health.bus_factor.sufficient_data ? `Top contributor: ${health.bus_factor.top_contributor_percentage}% · threshold: ${health.bus_factor.threshold_percentage}%` : ''}</div>
           <div style="margin-top:15px;font-weight:750;font-size:12px">Recommendations</div>
           ${health.recommendations.length ? health.recommendations.map(item => `<div class="recommendation">${escapeHtml(item.message)} <span style="color:#8d98ad">(${escapeHtml(item.signal)}: ${escapeHtml(item.metric)})</span></div>`).join('') : '<div class="empty">No action needed.</div>'}`;
       } catch (error) {
         $('health-panel').innerHTML = '<div class="empty">Health data is unavailable.</div>';
         $('health-message').textContent = 'Unavailable';
+        showError(error);
+      }
+    }
+
+    async function loadLanguages() {
+      if (!current) return;
+      const [owner, repo] = current.full_name.split('/', 2);
+      $('language-breakdown').innerHTML = '<div class="empty loading">Loading language statistics…</div>';
+      try {
+        const data = await api(`/api/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/languages`);
+        if (!data.languages.length) {
+          $('language-breakdown').innerHTML = '<div class="empty">GitHub detected no language data for this repository.</div>';
+          return;
+        }
+        const colors = ['#8b5cf6','#22d3ee','#34d399','#f59e0b','#f472b6','#60a5fa','#a3e635','#fb7185'];
+        let offset = 0;
+        const stops = data.languages.map((item, index) => {
+          const start = offset; offset += item.percentage;
+          return `${colors[index % colors.length]} ${start}% ${offset}%`;
+        }).join(', ');
+        $('language-breakdown').innerHTML = `<div class="language-layout"><div class="language-ring" style="background:conic-gradient(${stops})" role="img" aria-label="Repository language distribution"></div><div>${data.languages.map((item, index) => `<div class="language-row"><span class="language-dot" style="background:${colors[index % colors.length]}"></span><div><div>${escapeHtml(item.language)} · ${item.percentage}%</div><div class="language-bar"><span style="width:${item.percentage}%;background:${colors[index % colors.length]}"></span></div></div><span>${shortNumber(item.bytes)} B</span></div>`).join('')}</div></div>`;
+      } catch (error) {
+        $('language-breakdown').innerHTML = '<div class="empty">Language statistics are unavailable.</div>';
         showError(error);
       }
     }
