@@ -117,3 +117,8 @@ class GitHubClient:
             token,
             max_pages=3,
         )
+
+    def languages(self, owner: str, repo: str) -> dict[str, int]:
+        installation = self.get_installation(owner)
+        token = self.installation_token(installation["id"])
+        return self._request("GET", f"{GITHUB_API}/repos/{owner}/{repo}/languages", token)
