@@ -1,5 +1,6 @@
 import os
 
+import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 
@@ -32,8 +33,11 @@ def repositories() -> list[dict]:
 def repository(owner: str, repo: str) -> dict:
     try:
         data = client().repository(owner, repo)
-    except requests.HTTPError as exc:  # pragma: no cover
-        raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text) from exc
+    except requests.HTTPError as exc:
+        raise HTTPException(
+            status_code=exc.response.status_code,
+            detail=exc.response.text,
+        ) from exc
 
     return {
         "full_name": data["full_name"],
