@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import jwt
@@ -32,6 +33,18 @@ class GitHubClient:
         response = requests.request(method, url, headers=headers, timeout=30, **kwargs)
         response.raise_for_status()
         return response.json()
+
+    def _paginate(self, url: str, token: str, params: dict | None = None, max_pages: int = 10) -> list[dict]:
+        items = []
+        query = dict(params or {})
+        query["per_page"] = 100
+        for page in range(1, max_pages + 1):
+            query["page"] = page
+            batch = self._request("GET", url, token, params=query)
+            items.extend(batch)
+            if len(batch) < 100:
+                break
+        return items
 
     def get_installation(self, account: str = "exagonsoft") -> dict:
         installations = self._request(
@@ -66,19 +79,32 @@ class GitHubClient:
     def issues(self, owner: str, repo: str, state: str = "open") -> list[dict]:
         installation = self.get_installation(owner)
         token = self.installation_token(installation["id"])
-        return self._request(
-            "GET",
+        return self._paginate(
             f"{GITHUB_API}/repos/{owner}/{repo}/issues",
             token,
-            params={"state": state, "per_page": 100},
+            params={"state": state},
         )
 
     def pull_requests(self, owner: str, repo: str, state: str = "open") -> list[dict]:
         installation = self.get_installation(owner)
         token = self.installation_token(installation["id"])
-        return self._request(
-            "GET",
+        return self._paginate(
             f"{GITHUB_API}/repos/{owner}/{repo}/pulls",
             token,
-            params={"state": state, "per_page": 100},
+            params={"state": state},
         )
+
+    def commits(self, owner: str, repo: str, days: int = 180) -> list[dict]:
+        installation = self.get_installation(owner)
+        token = self.installation_token(installation["id"])
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+        try:
+            return self._paginate(
+                f"{GITHUB_API}/repos/{owner}/{repo}/commits",
+                token,
+                params={"since": since.isoformat()},
+            )
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 409:
+                return []
+            raise
